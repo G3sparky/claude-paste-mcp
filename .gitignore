@@ -1,5 +1,19 @@
+# Windows artifacts
+nul
+
+# Local Claude config
+.claude/
+
+# Node modules
 node_modules/
+
+# Environment files
 .env
-.DS_Store
-*.log
+.env.local
+
+# Temp files
 temp/
+*.tmp
+
+# Debug logs
+debug.log

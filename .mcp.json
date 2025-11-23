@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "claude-paste": {
+      "command": "node",
+      "args": ["C:\\01- AI projects\\CLI-file_pasting\\src\\index.js"],
+      "env": {}
+    }
+  }
+}

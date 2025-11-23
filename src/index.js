@@ -6,10 +6,17 @@ import { z } from "zod";
 import { spawn } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs";
 // Setup paths
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const POWERSHELL_SCRIPT = path.join(__dirname, "..", "powershell", "PastePopup.ps1");
+const DEBUG_LOG = path.join(__dirname, "..", "debug.log");
+
+function debugLog(msg) {
+  const timestamp = new Date().toISOString();
+  fs.appendFileSync(DEBUG_LOG, `[${timestamp}] ${msg}\n`);
+}
 // Initialize MCP Server
 const server = new Server(
   {
@@ -46,8 +53,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (request.params.name !== TOOL_NAME) {
     throw new Error(`Unknown tool: ${request.params.name}`);
   }
+  debugLog("=== Tool called: collect_pasted_items ===");
   try {
     const items = await runPowerShellPopup();
+    debugLog(`Received ${items.length} items from popup`);
     
     // If empty array, treat as cancel
     if (!items || items.length === 0) {
@@ -98,7 +107,10 @@ function runPowerShellPopup() {
       "-NoProfile",
       "-ExecutionPolicy", "Bypass",
       "-File", POWERSHELL_SCRIPT
-    ]);
+    ], {
+      // Ensure proper encoding
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+    });
     let stdoutData = "";
     let stderrData = "";
     ps.stdout.on("data", (data) => {
@@ -108,34 +120,37 @@ function runPowerShellPopup() {
       stderrData += data.toString();
     });
     ps.on("close", (code) => {
-      // Non-zero exit code usually means error or forced kill, but we'll check stdout first.
-      // If user cancels via button, script exits with 0 but prints nothing (or empty).
-      
+      debugLog(`Exit code: ${code}`);
+      debugLog(`stdout length: ${stdoutData.length}`);
+      debugLog(`stdout: ${stdoutData.substring(0, 1000)}`);
+      debugLog(`stderr: ${stderrData}`);
+
       if (stderrData && code !== 0) {
-        console.error("PS Error:", stderrData);
+        debugLog(`PS Error: ${stderrData}`);
       }
       const trimmed = stdoutData.trim();
       if (!trimmed) {
-        // Empty output = Cancel
+        debugLog("Empty output, resolving []");
         resolve([]);
         return;
       }
       try {
-        // Parse the last line as JSON
         const lines = trimmed.split('\n');
-        const lastLine = lines[lines.length - 1];
+        const lastLine = lines[lines.length - 1].trim();
+        debugLog(`Parsing last line: ${lastLine.substring(0, 500)}`);
         const result = JSON.parse(lastLine);
-        
+
         if (Array.isArray(result)) {
+          debugLog(`Parsed array with ${result.length} items`);
           resolve(result);
         } else {
-          // Fallback if script returned single object instead of array (shouldn't happen with current script)
+          debugLog("Parsed single object, wrapping in array");
           resolve([result]);
         }
       } catch (e) {
-        // If parsing fails, it might be just noise or an error
-        console.error("Failed to parse output:", trimmed);
-        resolve([]); // Treat as empty/fail safely
+        debugLog(`Parse error: ${e.message}`);
+        debugLog(`Raw output: ${trimmed}`);
+        resolve([]);
       }
     });
   });

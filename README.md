@@ -11,7 +11,7 @@ A Windows-native MCP server that allows you to paste images (and eventually text
     ```
 2.  **Configure Claude**:
     Add the following to your `~/.claude/config.json` (create it if it doesn't exist):
-    
+
     ```json
     {
       "mcpServers": {

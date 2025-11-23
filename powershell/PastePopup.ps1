@@ -168,9 +168,10 @@ $btnDelete.Add_Click({
 })
 $btnConfirm.Add_Click({
     if ($global:items.Count -gt 0) {
-        # Output JSON array as the LAST line
+        # Output JSON array as the LAST line - use [Console] for reliable stdio
         $json = $global:items | ConvertTo-Json -Compress -Depth 2
-        Write-Output $json
+        [Console]::Out.WriteLine($json)
+        [Console]::Out.Flush()
         $window.Close()
     }
 })
