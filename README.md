@@ -1,5 +1,5 @@
 # Claude Paste MCP
-A Windows-native MCP server that allows you to paste images (and eventually text/tables) directly into Claude via a popup interface.
+A Windows-native MCP server that allows you to paste images, Excel tables, rich text, and plain text directly into Claude via a popup interface.
 ## Requirements
 - Windows 10/11
 - Node.js 18+
@@ -26,12 +26,19 @@ A Windows-native MCP server that allows you to paste images (and eventually text
 ## Usage
 1.  Open Claude CLI or Desktop.
 2.  Type a prompt that triggers the tool, for example:
-    > "I'm seeing a bug, here is the screenshot: @pic"
+    > "I'm seeing a bug, here is the screenshot: /pic"
+
+    *Note: Use `/pic` (slash command) instead of `@pic`.*
 3.  A **Windows Popup** will appear.
-4.  Press **Ctrl+V** to paste an image. You can paste multiple times.
-5.  Click **Confirm**.
-6.  Claude will receive the image paths and context.
+4.  Press **Ctrl+V** to paste content. Supported formats:
+    - **Images** (screenshots, copied images)
+    - **Excel tables** (copied cells from Excel/Google Sheets)
+    - **Rich Text** (formatted text from Word, etc.)
+    - **Plain Text**
+5.  You can paste multiple items. Select items to preview or delete.
+6.  Click **Confirm**.
+7.  Claude will receive the content paths and context.
 ## Phases
-- **Phase 1 (MVP)**: Single image paste.
-- **Phase 2 (Current)**: Multiple images, list view, delete capability.
-- **Phase 3 (Planned)**: Support for Excel tables and Rich Text.
+- **Phase 1**: Single image paste.
+- **Phase 2**: Multiple images, list view, delete capability.
+- **Phase 3 (Current)**: Support for Excel tables, Rich Text, and plain text.

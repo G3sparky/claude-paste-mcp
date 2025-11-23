@@ -1,14 +1,16 @@
 # Load WPF Assemblies
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName WindowsFormsIntegration
 # --- Configuration ---
 $TempDir = "$env:TEMP\claude-paste-mcp"
 if (-not (Test-Path $TempDir)) { New-Item -ItemType Directory -Force -Path $TempDir | Out-Null }
-# --- XAML UI Definition (Phase 2: Master-Detail) ---
+# --- XAML UI Definition (Phase 3: Tables + Rich Text) ---
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Paste Item for Claude" Height="500" Width="700" WindowStartupLocation="CenterScreen" Topmost="True">
+        Title="Paste Item for Claude" Height="550" Width="750" WindowStartupLocation="CenterScreen" Topmost="True">
     <Window.Resources>
         <Style TargetType="Button">
             <Setter Property="Margin" Value="5"/>
@@ -19,12 +21,13 @@ if (-not (Test-Path $TempDir)) { New-Item -ItemType Directory -Force -Path $Temp
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/> <!-- Header -->
             <RowDefinition Height="*"/>    <!-- Content -->
+            <RowDefinition Height="Auto"/> <!-- Progress -->
             <RowDefinition Height="Auto"/> <!-- Footer -->
         </Grid.RowDefinitions>
         <!-- Header -->
         <StackPanel Grid.Row="0" Margin="0,0,0,10">
             <TextBlock Text="Paste Items for Claude" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center"/>
-            <TextBlock Text="Press Ctrl+V to paste images. Select items to preview or delete." FontSize="12" Foreground="Gray" HorizontalAlignment="Center" Margin="0,5,0,0"/>
+            <TextBlock Text="Press Ctrl+V to paste images, tables, or text. Select items to preview or delete." FontSize="12" Foreground="Gray" HorizontalAlignment="Center" Margin="0,5,0,0"/>
         </StackPanel>
         <!-- Main Content: List + Preview -->
         <Grid Grid.Row="1">
@@ -37,21 +40,42 @@ if (-not (Test-Path $TempDir)) { New-Item -ItemType Directory -Force -Path $Temp
                 <TextBlock Text="Items" DockPanel.Dock="Top" FontWeight="SemiBold" Margin="0,0,0,5"/>
                 <ListBox Name="lbItems" DisplayMemberPath="name" BorderBrush="#CCCCCC" BorderThickness="1"/>
             </DockPanel>
-            <!-- Right: Preview -->
+            <!-- Right: Preview with Tabs -->
             <DockPanel Grid.Column="1">
                 <TextBlock Text="Preview" DockPanel.Dock="Top" FontWeight="SemiBold" Margin="0,0,0,5"/>
                 <Border BorderBrush="#DDDDDD" BorderThickness="1" Background="#F9F9F9">
-                    <Image Name="imgPreview" Stretch="Uniform" Margin="5"/>
+                    <Grid>
+                        <!-- Image Preview (for images) -->
+                        <Image Name="imgPreview" Stretch="Uniform" Margin="5"/>
+                        <!-- Tabbed Preview (for tables/text) -->
+                        <TabControl Name="tabPreview" Visibility="Collapsed">
+                            <TabItem Header="Source">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                                    <TextBox Name="txtPreview" IsReadOnly="True" TextWrapping="Wrap" Background="Transparent" BorderThickness="0" Margin="5" FontFamily="Consolas" FontSize="11"/>
+                                </ScrollViewer>
+                            </TabItem>
+                            <TabItem Header="Rendered" Name="tabRendered">
+                                <WindowsFormsHost Name="wfHost">
+                                    <x:Null/>
+                                </WindowsFormsHost>
+                            </TabItem>
+                        </TabControl>
+                    </Grid>
                 </Border>
             </DockPanel>
         </Grid>
+        <!-- Progress Bar -->
+        <Grid Grid.Row="2" Margin="0,5,0,0">
+            <ProgressBar Name="progressBar" Height="20" IsIndeterminate="True" Visibility="Collapsed"/>
+            <TextBlock Name="lblProgress" Text="Processing..." HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+        </Grid>
         <!-- Footer: Status & Buttons -->
-        <Grid Grid.Row="2" Margin="0,10,0,0">
+        <Grid Grid.Row="3" Margin="0,10,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            
+
             <TextBlock Name="lblStatus" Text="Ready." VerticalAlignment="Center" Foreground="Gray"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal">
                 <Button Name="btnDelete" Content="Delete Selected" IsEnabled="False"/>
@@ -68,22 +92,52 @@ $window = [Windows.Markup.XamlReader]::Load($reader)
 # --- Locate Controls ---
 $lbItems = $window.FindName("lbItems")
 $imgPreview = $window.FindName("imgPreview")
+$tabPreview = $window.FindName("tabPreview")
+$txtPreview = $window.FindName("txtPreview")
+$tabRendered = $window.FindName("tabRendered")
+$wfHost = $window.FindName("wfHost")
+$progressBar = $window.FindName("progressBar")
+$lblProgress = $window.FindName("lblProgress")
 $lblStatus = $window.FindName("lblStatus")
 $btnDelete = $window.FindName("btnDelete")
 $btnConfirm = $window.FindName("btnConfirm")
 $btnCancel = $window.FindName("btnCancel")
+
+# --- Setup WebBrowser for HTML rendering ---
+$webBrowser = New-Object System.Windows.Forms.WebBrowser
+$webBrowser.ScriptErrorsSuppressed = $true
+$wfHost.Child = $webBrowser
 # --- State ---
 $global:items = New-Object System.Collections.ArrayList
 $global:imageCount = 0
+$global:tableCount = 0
+$global:textCount = 0
 # --- Helper Functions ---
+function Show-Progress {
+    param([string]$message = "Processing...")
+    $lblProgress.Text = $message
+    $progressBar.Visibility = "Visible"
+    $lblProgress.Visibility = "Visible"
+    $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Render)
+}
+
+function Hide-Progress {
+    $progressBar.Visibility = "Collapsed"
+    $lblProgress.Visibility = "Collapsed"
+}
+
 function Update-UIState {
     $hasItems = $global:items.Count -gt 0
     $btnConfirm.IsEnabled = $hasItems
-    
+
     $hasSelection = $lbItems.SelectedItem -ne $null
     $btnDelete.IsEnabled = $hasSelection
     if (-not $hasSelection) {
         $imgPreview.Source = $null
+        $imgPreview.Visibility = "Visible"
+        $tabPreview.Visibility = "Collapsed"
+        $txtPreview.Text = ""
+        $webBrowser.DocumentText = ""
     }
 }
 # --- Event Handlers ---
@@ -91,68 +145,259 @@ $window.Add_KeyDown({
     param($sender, $e)
     # Handle Ctrl+V
     if ($e.Key -eq 'V' -and ([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control)) {
-        
-        # PHASE 3 TODO: Check for Text or HTML (Excel) here
-        # if ([System.Windows.Clipboard]::ContainsText()) { ... }
-        if ([System.Windows.Clipboard]::ContainsImage()) {
+        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $captured = $false
+
+        # Priority 1: Check for HTML Format (Excel tables, web content)
+        $htmlData = [System.Windows.Clipboard]::GetData("HTML Format")
+        if ($htmlData -and -not $captured) {
             try {
+                Show-Progress "Processing table data..."
+
+                $global:tableCount++
+                $name = "Table $($global:tableCount)"
+                $filename = "table-$timestamp-$($global:tableCount).html"
+                $path = Join-Path $TempDir $filename
+
+                # Extract the actual HTML content from the clipboard HTML format
+                # The format has headers like "Version:...", "StartFragment:...", etc.
+                $htmlContent = $htmlData
+
+                # Try to extract just the fragment between StartFragment and EndFragment
+                if ($htmlData -match '<!--StartFragment-->(.*)<!--EndFragment-->') {
+                    $htmlContent = $matches[1]
+                }
+
+                # Wrap in proper HTML document for rendering
+                $fullHtml = @"
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: Arial, sans-serif; font-size: 12px; margin: 10px; }
+        table { border-collapse: collapse; width: 100%; }
+        td, th { border: 1px solid #ccc; padding: 6px 8px; }
+        th { background: #f0f0f0; font-weight: bold; }
+        tr:nth-child(even) { background: #f9f9f9; }
+    </style>
+</head>
+<body>
+$htmlContent
+</body>
+</html>
+"@
+
+                # Save HTML file (full version for rendering)
+                [System.IO.File]::WriteAllText($path, $fullHtml, [System.Text.Encoding]::UTF8)
+
+                # Create preview (first 200 chars of plain text)
+                $plainText = [System.Windows.Clipboard]::GetText()
+                $preview = if ($plainText.Length -gt 200) { $plainText.Substring(0, 200) + "..." } else { $plainText }
+
+                $newItem = [PSCustomObject]@{
+                    type = "table"
+                    name = $name
+                    path = $path
+                    contentPreview = $preview
+                    rawHtml = $htmlContent
+                }
+
+                [void]$global:items.Add($newItem)
+                [void]$lbItems.Items.Add($newItem)
+                $lbItems.SelectedItem = $newItem
+
+                Hide-Progress
+                $lblStatus.Text = "Captured $name (HTML table)"
+                $lblStatus.Foreground = "Green"
+                $captured = $true
+            }
+            catch {
+                Hide-Progress
+                $lblStatus.Text = "Error pasting HTML: $_"
+                $lblStatus.Foreground = "Red"
+            }
+        }
+
+        # Priority 2: Check for Image
+        if ([System.Windows.Clipboard]::ContainsImage() -and -not $captured) {
+            try {
+                Show-Progress "Processing image..."
+
                 $image = [System.Windows.Clipboard]::GetImage()
-                
-                # Generate filename
+
                 $global:imageCount++
-                $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
                 $name = "Image $($global:imageCount)"
                 $filename = "image-$timestamp-$($global:imageCount).png"
                 $path = Join-Path $TempDir $filename
-                
+
                 # Save PNG
                 $encoder = New-Object System.Windows.Media.Imaging.PngBitmapEncoder
                 $encoder.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($image))
                 $fs = [System.IO.File]::OpenWrite($path)
                 $encoder.Save($fs)
                 $fs.Close()
-                # Create Item Object
+
                 $newItem = [PSCustomObject]@{
                     type = "image"
                     name = $name
                     path = $path
-                    contentPreview = "" # Reserved for text
+                    contentPreview = ""
                 }
-                # Add to list
+
                 [void]$global:items.Add($newItem)
                 [void]$lbItems.Items.Add($newItem)
-                
-                # Select new item
                 $lbItems.SelectedItem = $newItem
-                
+
+                Hide-Progress
                 $lblStatus.Text = "Captured $name"
                 $lblStatus.Foreground = "Green"
+                $captured = $true
             }
             catch {
-                $lblStatus.Text = "Error pasting image."
+                Hide-Progress
+                $lblStatus.Text = "Error pasting image: $_"
                 $lblStatus.Foreground = "Red"
             }
         }
-        else {
-            $lblStatus.Text = "Clipboard does not contain an image."
+
+        # Priority 3: Check for Rich Text Format
+        $rtfData = [System.Windows.Clipboard]::GetData("Rich Text Format")
+        if ($rtfData -and -not $captured) {
+            try {
+                Show-Progress "Processing rich text..."
+
+                $global:textCount++
+                $name = "Rich Text $($global:textCount)"
+                $filename = "richtext-$timestamp-$($global:textCount).rtf"
+                $path = Join-Path $TempDir $filename
+
+                # Save RTF file
+                [System.IO.File]::WriteAllText($path, $rtfData, [System.Text.Encoding]::UTF8)
+
+                # Create preview from plain text
+                $plainText = [System.Windows.Clipboard]::GetText()
+                $preview = if ($plainText.Length -gt 200) { $plainText.Substring(0, 200) + "..." } else { $plainText }
+
+                $newItem = [PSCustomObject]@{
+                    type = "richtext"
+                    name = $name
+                    path = $path
+                    contentPreview = $preview
+                }
+
+                [void]$global:items.Add($newItem)
+                [void]$lbItems.Items.Add($newItem)
+                $lbItems.SelectedItem = $newItem
+
+                Hide-Progress
+                $lblStatus.Text = "Captured $name"
+                $lblStatus.Foreground = "Green"
+                $captured = $true
+            }
+            catch {
+                Hide-Progress
+                $lblStatus.Text = "Error pasting RTF: $_"
+                $lblStatus.Foreground = "Red"
+            }
+        }
+
+        # Priority 4: Plain text fallback
+        if ([System.Windows.Clipboard]::ContainsText() -and -not $captured) {
+            try {
+                Show-Progress "Processing text..."
+
+                $plainText = [System.Windows.Clipboard]::GetText()
+                if ($plainText -and $plainText.Trim().Length -gt 0) {
+                    $global:textCount++
+                    $name = "Text $($global:textCount)"
+                    $filename = "text-$timestamp-$($global:textCount).txt"
+                    $path = Join-Path $TempDir $filename
+
+                    # Save text file
+                    [System.IO.File]::WriteAllText($path, $plainText, [System.Text.Encoding]::UTF8)
+
+                    $preview = if ($plainText.Length -gt 200) { $plainText.Substring(0, 200) + "..." } else { $plainText }
+
+                    $newItem = [PSCustomObject]@{
+                        type = "text"
+                        name = $name
+                        path = $path
+                        contentPreview = $preview
+                    }
+
+                    [void]$global:items.Add($newItem)
+                    [void]$lbItems.Items.Add($newItem)
+                    $lbItems.SelectedItem = $newItem
+
+                    Hide-Progress
+                    $lblStatus.Text = "Captured $name"
+                    $lblStatus.Foreground = "Green"
+                    $captured = $true
+                } else {
+                    Hide-Progress
+                }
+            }
+            catch {
+                Hide-Progress
+                $lblStatus.Text = "Error pasting text: $_"
+                $lblStatus.Foreground = "Red"
+            }
+        }
+
+        if (-not $captured) {
+            $lblStatus.Text = "Clipboard is empty or contains unsupported format."
             $lblStatus.Foreground = "Red"
         }
+
         Update-UIState
     }
 })
 $lbItems.Add_SelectionChanged({
     $sel = $lbItems.SelectedItem
-    if ($sel -and $sel.type -eq "image") {
-        try {
-            # Load image for preview (CacheOption=OnLoad to avoid file locking)
-            $bmp = New-Object System.Windows.Media.Imaging.BitmapImage
-            $bmp.BeginInit()
-            $bmp.CacheOption = "OnLoad"
-            $bmp.UriSource = $sel.path
-            $bmp.EndInit()
-            $imgPreview.Source = $bmp
-        } catch {
-            $imgPreview.Source = $null
+    if ($sel) {
+        if ($sel.type -eq "image") {
+            # Show image preview
+            $imgPreview.Visibility = "Visible"
+            $tabPreview.Visibility = "Collapsed"
+            try {
+                $bmp = New-Object System.Windows.Media.Imaging.BitmapImage
+                $bmp.BeginInit()
+                $bmp.CacheOption = "OnLoad"
+                $bmp.UriSource = $sel.path
+                $bmp.EndInit()
+                $imgPreview.Source = $bmp
+            } catch {
+                $imgPreview.Source = $null
+            }
+        } else {
+            # Show tabbed preview for table, richtext, or text
+            $imgPreview.Visibility = "Collapsed"
+            $tabPreview.Visibility = "Visible"
+
+            try {
+                $content = [System.IO.File]::ReadAllText($sel.path, [System.Text.Encoding]::UTF8)
+                # Limit source preview to 10000 chars for performance
+                $sourceContent = $content
+                if ($sourceContent.Length -gt 10000) {
+                    $sourceContent = $sourceContent.Substring(0, 10000) + "`n`n... (truncated)"
+                }
+                $txtPreview.Text = $sourceContent
+
+                # Show/hide Rendered tab based on content type
+                if ($sel.type -eq "table") {
+                    $tabRendered.Visibility = "Visible"
+                    # Render HTML in WebBrowser
+                    $webBrowser.DocumentText = $content
+                } else {
+                    # For text/richtext, hide Rendered tab
+                    $tabRendered.Visibility = "Collapsed"
+                    $tabPreview.SelectedIndex = 0
+                }
+            } catch {
+                $txtPreview.Text = "Error loading preview: $_"
+                $tabRendered.Visibility = "Collapsed"
+            }
         }
     }
     Update-UIState

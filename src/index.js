@@ -35,7 +35,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: TOOL_NAME,
-        description: "Opens a Windows popup to let the user paste images (and eventually text/tables) from their clipboard. Use this when the user indicates they want to attach content (e.g. via @pic).",
+        description: "Opens a Windows popup to let the user paste images, Excel tables, rich text, or plain text from their clipboard. Use this when the user indicates they want to attach content (e.g. via @pic).",
         inputSchema: {
           type: "object",
           properties: {
@@ -69,12 +69,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         ],
       };
     }
+    // Group items by type
+    const images = items.filter(i => i.type === "image");
+    const tables = items.filter(i => i.type === "table");
+    const richtext = items.filter(i => i.type === "richtext");
+    const text = items.filter(i => i.type === "text");
+
     // Build friendly summary
+    const parts = [];
+    if (images.length > 0) {
+      parts.push(`${images.length} image${images.length > 1 ? 's' : ''}`);
+    }
+    if (tables.length > 0) {
+      parts.push(`${tables.length} table${tables.length > 1 ? 's' : ''}`);
+    }
+    if (richtext.length > 0) {
+      parts.push(`${richtext.length} rich text item${richtext.length > 1 ? 's' : ''}`);
+    }
+    if (text.length > 0) {
+      parts.push(`${text.length} text item${text.length > 1 ? 's' : ''}`);
+    }
+
     const count = items.length;
     const itemNames = items.map(i => i.name).join(", ");
-    const summaryText = count === 1 
-      ? `[1 image attached: ${items[0].name} (path: ${items[0].path})]`
-      : `[${count} images attached: ${itemNames}]`;
+    const summaryText = `[${parts.join(', ')} attached: ${itemNames}]`;
+
     // Build machine-readable JSON block
     const jsonBlock = `ITEMS_JSON: ${JSON.stringify(items)}`;
     return {
