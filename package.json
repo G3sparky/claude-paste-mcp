@@ -1,0 +1,17 @@
+{
+  "name": "claude-paste-mcp",
+  "version": "0.1.0",
+  "description": "MCP server to paste images and text from Windows clipboard to Claude",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.6.0",
+    "zod": "^3.23.8"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
