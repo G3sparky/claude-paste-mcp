@@ -41,4 +41,7 @@ A Windows-native MCP server that allows you to paste images, Excel tables, rich 
 ## Phases
 - **Phase 1**: Single image paste.
 - **Phase 2**: Multiple images, list view, delete capability.
-- **Phase 3 (Current)**: Support for Excel tables, Rich Text, and plain text.
+- **Phase 3**: Support for Excel tables, Rich Text, and plain text.
+- **Phase 4 (In Progress)**: Moodle Code generation - auto-convert Excel tables to Moodle Cloze format (red text = correct answers).
+
+See `PROGRESS.md` for detailed progress tracking.
